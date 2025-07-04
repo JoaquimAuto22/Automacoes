@@ -1,57 +1,65 @@
-import fitz
-import os
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from datetime import datetime
+from typing import List, Dict
+from tqdm import tqdm
 from PIL import Image
+from sys import exit
 import pytesseract
-import re
+import cv2 as cv
+import fitz
+import time
+import os
+import re  
 
-# Caminho para o Tesseract instalado (ajuste se necessário)
+path = "SINGULAR_FACILITIES_CE/arquivos_organizados/Pastas_Mescladas/nfs sem documento/CONDOMINIO GRAN VILLAGE CAUCAIA - 20769.pdf"
 
+def pdf_to_img(path: str, page: int = 0) -> None:
+    pdf_document = fitz.open(path)
+    page = pdf_document.load_page(page)
+    image = page.get_pixmap()
+    
+    img_path = 'temp_img.jpg'
+    image.save(img_path)
+    pdf_document.close()
 
-# Regex para encontrar CNPJs com ou sem pontuação
-CNPJ_REGEX = r'\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}'
+    image = Image.open(img_path)
 
-def extrair_cnpjs_do_pdf(path_pdf: str, page: int = 0):
+    cnpj_cliente = image.crop((77, 232, 170, 245))
+
+    cnpj_cliente.save("cnpj.jpg")
+    os.remove(img_path)
+
+def extract_text(img_path: str, config: str = '--psm 10') -> str:
+    img = cv.imread(img_path)
+    if img is None:
+        raise FileNotFoundError(f"Imagem não encontrada: {img_path}")
+    
+    scale_percent = 150
+    new_width = int(img.shape[1] * scale_percent / 100)
+    new_height = int(img.shape[0] * scale_percent / 100)
+    img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
+
+    img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+
+    text = pytesseract.image_to_string(img, config=config)
+    return text.strip()
+
+def extrair_somente_numeros(texto: str) -> str:
+    """Remove tudo que não for número."""
+    return re.sub(r'\D', '', texto)
+
+if __name__ == "__main__":
     try:
-        # Converter PDF em imagem
-        doc = fitz.open(path_pdf)
-        pagina = doc.load_page(page)
-        pix = pagina.get_pixmap(dpi=300)
-        temp_img_path = 'temp_cnpj.jpg'
-        pix.save(temp_img_path)
-        doc.close()
+        pdf_to_img(path)
+        texto_cliente = extract_text('cnpj.jpg')
+        cnpj_numerico = extrair_somente_numeros(texto_cliente)
 
-        # Ler imagem e aplicar OCR
-        imagem = Image.open(temp_img_path)
-        texto = pytesseract.image_to_string(imagem, lang='por')
+        print("CNPJ ", cnpj_numerico)
 
-        # Buscar CNPJs com regex
-        cnpjs = re.findall(CNPJ_REGEX, texto)
-        cnpjs = [re.sub(r'\D', '', c) for c in cnpjs]  # limpar pontuação
-
-        # Remover duplicatas mantendo ordem
-        vistos = set()
-        cnpjs_unicos = []
-        for c in cnpjs:
-            if c not in vistos:
-                vistos.add(c)
-                cnpjs_unicos.append(c)
-
-        os.remove(temp_img_path)
-
-        # Mostrar resultados
-        if cnpjs_unicos:
-            print("CNPJs encontrados:")
-            for cnpj in cnpjs_unicos:
-                print("-", cnpj)
-            return cnpjs_unicos
-        else:
-            print("Nenhum CNPJ encontrado.")
-            return []
 
     except Exception as e:
-        print(f"Erro ao processar PDF: {e}")
-        return []
-
-# Caminho do seu arquivo PDF
-pdf_path = "GS/envio_boletos_nfs/SINGULAR_FACILITIES_CE/arquivos_organizados/Pastas_Mescladas/nfs sem documento/27-05 ASSOCIACAO RESERVA CAMARA.pdf"
-extrair_cnpjs_do_pdf(pdf_path)
+        print(f"Erro: {e}")
