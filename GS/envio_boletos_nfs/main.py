@@ -274,6 +274,7 @@ class GerenciadorDocumentos:
         caminho_boletos = os.path.join(self.organizados_dir, 'Boletos_organizados')
         caminho_nfs = os.path.join(self.organizados_dir, 'nfs_organizados')
         caminho_destino = os.path.join(self.organizados_dir, 'Pastas_Mescladas')
+        caminho_sem_documento = 'GS/envio_boletos_nfs/docs_sem_conjunto'
         
         if not os.path.exists(caminho_boletos) or not os.path.exists(caminho_nfs):
             print("\nErro: Pastas de boletos ou NF-es organizadas não encontradas.")
@@ -570,6 +571,7 @@ Sistema Automático de envio de Faturamento"""
             print(f"\nErro ao salvar o arquivo Excel: {e}")
     
     
+    
 
     def criar_diretorio(self, caminho: str) -> None:
         if not os.path.exists(caminho):
@@ -596,8 +598,6 @@ Sistema Automático de envio de Faturamento"""
 
         else:
             print("\nAviso: Nenhum CNPJ mapeado para envio de emails.")
-
-        
 
         print("\n=== PROCESSAMENTO CONCLUÍDO ===")
         print(f"Resultados disponíveis em: {os.path.abspath(self.organizados_dir)}")
