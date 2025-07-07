@@ -109,6 +109,44 @@ class GerenciadorDocumentos:
         except Exception as e:
             print(f"\nErro ao extrair CNPJ por coordenada OCR: {e}")
             return None
+        
+    def extrair_cnpj_boleto_por_imagem(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
+        
+        try:
+            doc = fitz.open(caminho_pdf)
+            page = doc.load_page(pagina)
+            pix = page.get_pixmap()
+            temp_img_path = 'temp_boleto.jpg'
+            pix.save(temp_img_path)
+            doc.close()
+
+            image = Image.open(temp_img_path)
+            cnpj_crop = image.crop((175, 720, 400, 740))  
+            cnpj_crop_path = 'temp_boleto_crop.jpg'
+            cnpj_crop.save(cnpj_crop_path)
+            os.remove(temp_img_path)
+
+            img = cv.imread(cnpj_crop_path)
+            if img is None:
+                print(f"Erro ao abrir imagem para OCR (boleto): {cnpj_crop_path}")
+                return None
+
+            scale_percent = 300
+            new_width = int(img.shape[1] * scale_percent / 100)
+            new_height = int(img.shape[0] * scale_percent / 100)
+            img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
+            img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+
+            texto = pytesseract.image_to_string(img, config='--psm 10')
+            os.remove(cnpj_crop_path)
+
+            cnpj = re.sub(r'\D', '', texto)
+            return cnpj  
+
+
+        except Exception as e:
+            print(f"\nErro ao extrair CNPJ por imagem do boleto: {e}")
+            return None
 
     def extrair_texto_pdf(self, caminho_pdf: str) -> List[str]:
         try:
@@ -185,6 +223,9 @@ class GerenciadorDocumentos:
                 caminho_completo = os.path.join(self.boletos_dir, arquivo)
                 linhas = self.extrair_texto_pdf(caminho_completo)
                 documento = self.encontrar_documento_boleto(linhas)
+
+                if not documento:
+                    documento = self.extrair_cnpj_boleto_por_imagem(caminho_completo)
                 
                 if not documento:
                     print(f"\nAtenção: Não foi possível identificar CNPJ/CPF no arquivo {arquivo}")
@@ -197,8 +238,6 @@ class GerenciadorDocumentos:
     def organizar_nfs(self) -> None:
             destino = os.path.join(self.organizados_dir, 'nfs_organizados')
             self.criar_diretorio(destino)
-            destino_sem_documento = os.path.join(destino, 'nfs sem documento')
-            self.criar_diretorio(destino_sem_documento)
             arquivos = [f for f in os.listdir(self.nfs_dir) if f.lower().endswith('.pdf')]
 
             if not arquivos:
@@ -226,7 +265,7 @@ class GerenciadorDocumentos:
                         self.criar_diretorio(pasta_destino)
                         shutil.copy2(caminho_completo, os.path.join(pasta_destino, arquivo))
                     else:
-                        shutil.copy2(caminho_completo, os.path.join(destino_sem_documento, arquivo))
+                        shutil.copy2(caminho_completo, os.path.join(arquivo))
                 except Exception as e:
                     print(f"\nErro ao processar {arquivo}: {e}")
                     
@@ -462,33 +501,75 @@ Sistema Automático de envio de Faturamento"""
         self.separar_enviados_nao_enviados(enviados_ids)
         self.calcular_porcentagem_nfs_enviadas()
         return enviados_ids
-
     
-    def gerar_relatorio_execucao(self, tempo_execucao_segundos: float):
-        caminho_saida = os.path.join(self.organizados_dir, 'relatorio_execucao.xlsx')
+    def separar_enviados_nao_enviados(self, enviados: List[str]) -> None:
+        destino_base = os.path.join(self.organizados_dir, 'Pastas_Separadas')   
+        enviados_dir = os.path.join(destino_base, 'enviados')
+        nao_enviados_dir = os.path.join(destino_base, 'nao_enviados')
 
-        tempo_min, tempo_seg = divmod(tempo_execucao_segundos, 60)
-        tempo_formatado = f"{int(tempo_min)} min {int(tempo_seg)} s"
+        self.criar_diretorio(enviados_dir)
+        self.criar_diretorio(nao_enviados_dir)
 
-        df = pd.DataFrame({
-            'Descrição': [
-                'Total de NFs mapeadas',
-                'NFs enviadas com sucesso',
-                'NFs não enviadas',
-                'Porcentagem NFs enviadas (%)',
-                'Porcentagem NFs não enviadas (%)',
-                'Arquivos sem documento identificado',
-                'Tempo de execução'
-            ],
-           
+        caminho_origem = os.path.join(self.organizados_dir, 'Pastas_Mescladas')
+        todas_pastas = [
+            pasta for pasta in os.listdir(caminho_origem)
+            if os.path.isdir(os.path.join(caminho_origem, pasta)) and pasta != 'nfs sem documento'
+        ]
+
+        for pasta in todas_pastas:
+            origem = os.path.join(caminho_origem, pasta)
+            destino = os.path.join(enviados_dir if pasta in enviados else nao_enviados_dir, pasta)
+
+            if os.path.exists(destino):
+                shutil.rmtree(destino)
             
+            shutil.copytree(origem, destino)
+
+        print(f"\nPastas separadas em:\n - Enviados: {enviados_dir}\n - Não enviados: {nao_enviados_dir}")
+
+    def calcular_porcentagem_nfs_enviadas(self) -> None:
+        import pandas as pd
+
+        base_separadas = os.path.join(self.organizados_dir, 'Pastas_Separadas')
+        enviados_dir = os.path.join(base_separadas, 'enviados')
+        nao_enviados_dir = os.path.join(base_separadas, 'nao_enviados')
+
+        def contar_pdfs_nfs_em_pasta(pasta_base: str) -> int:
+            total = 0
+            if not os.path.exists(pasta_base):
+                return 0
+            for documento in os.listdir(pasta_base):
+                caminho_doc = os.path.join(pasta_base, documento)
+                if os.path.isdir(caminho_doc):
+                    arquivos_pdf = [f for f in os.listdir(caminho_doc) if f.lower().endswith('.pdf')]
+                    total += len(arquivos_pdf)
+            return total
+
+        enviados_nfs = contar_pdfs_nfs_em_pasta(enviados_dir)
+        nao_enviados_nfs = contar_pdfs_nfs_em_pasta(nao_enviados_dir)
+        total_nfs = enviados_nfs + nao_enviados_nfs
+
+        if total_nfs == 0:
+            print("\nNenhum arquivo PDF encontrado nas pastas enviados e não enviados para cálculo.")
+            return
+
+        pct_enviados = (enviados_nfs / total_nfs) * 100
+        pct_nao_enviados = (nao_enviados_nfs / total_nfs) * 100
+
+        df_resumo = pd.DataFrame({
+            'Status': ['Enviados', 'Não Enviados', 'Total'],
+            'Quantidade': [enviados_nfs, nao_enviados_nfs, total_nfs],
+            'Porcentagem (%)': [round(pct_enviados, 2), round(pct_nao_enviados, 2), 100.0]
         })
 
+        arquivo_saida = os.path.join(os.getcwd(), 'GS/envio_boletos_nfs/resumo_nf_enviadas.xlsx')
         try:
-            df.to_excel(caminho_saida, index=False)
-            print(f"\nRelatório de execução salvo em: {caminho_saida}")
+            df_resumo.to_excel(arquivo_saida, index=False)
+            print(f"\nResumo de NFs enviadas e não enviadas salvo em: {arquivo_saida}")
         except Exception as e:
-            print(f"\nErro ao salvar relatório de execução: {e}")
+            print(f"\nErro ao salvar o arquivo Excel: {e}")
+    
+    
 
     def criar_diretorio(self, caminho: str) -> None:
         if not os.path.exists(caminho):
@@ -506,19 +587,17 @@ Sistema Automático de envio de Faturamento"""
         print("\n Enviando emails para CNPJs mapeados...")
         enviados_ids = []
         if self.CNPJ_PARA_EMAIL:
-            sucesso = self.enviar_emails()
-            if sucesso:
-                enviados_ids = self.enviar_emails()
-                self.nfs_enviadas = len(enviados_ids)
-                self.nfs_nao_enviadas = len([
-                    doc for doc in os.listdir(os.path.join(self.organizados_dir, 'Pastas_Separadas', 'nao_enviados'))
-                    if os.path.isdir(os.path.join(self.organizados_dir, 'Pastas_Separadas', 'nao_enviados', doc))
-])
+           enviados_ids = self.enviar_emails()
+        if enviados_ids:
+            self.nfs_enviadas = len(enviados_ids)
+            self.nfs_nao_enviadas = len([
+                doc for doc in os.listdir(os.path.join(self.organizados_dir, 'Pastas_Separadas', 'nao_enviados'))
+                if os.path.isdir(os.path.join(self.organizados_dir, 'Pastas_Separadas', 'nao_enviados', doc))])
+
         else:
             print("\nAviso: Nenhum CNPJ mapeado para envio de emails.")
 
-        fim = time.time()
-        self.gerar_relatorio_execucao(fim - inicio)
+        
 
         print("\n=== PROCESSAMENTO CONCLUÍDO ===")
         print(f"Resultados disponíveis em: {os.path.abspath(self.organizados_dir)}")

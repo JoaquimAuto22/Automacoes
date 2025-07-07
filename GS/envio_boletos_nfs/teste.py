@@ -15,7 +15,7 @@ import time
 import os
 import re  
 
-path = "SINGULAR_FACILITIES_CE/arquivos_organizados/Pastas_Mescladas/nfs sem documento/CONDOMINIO GRAN VILLAGE CAUCAIA - 20769.pdf"
+path = "GS/envio_boletos_nfs/SINGULAR_FACILITIES_CE/BOLETOS/27-05 MILIGRAMA FARMACIA DE MANIPULACAO SA.pdf"
 
 def pdf_to_img(path: str, page: int = 0) -> None:
     pdf_document = fitz.open(path)
@@ -28,17 +28,17 @@ def pdf_to_img(path: str, page: int = 0) -> None:
 
     image = Image.open(img_path)
 
-    cnpj_cliente = image.crop((77, 232, 170, 245))
+    cnpj_cliente = image.crop((175, 720, 400, 740))
 
     cnpj_cliente.save("cnpj.jpg")
-    os.remove(img_path)
+   
 
 def extract_text(img_path: str, config: str = '--psm 10') -> str:
     img = cv.imread(img_path)
     if img is None:
         raise FileNotFoundError(f"Imagem não encontrada: {img_path}")
     
-    scale_percent = 150
+    scale_percent = 300
     new_width = int(img.shape[1] * scale_percent / 100)
     new_height = int(img.shape[0] * scale_percent / 100)
     img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
