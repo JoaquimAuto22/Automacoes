@@ -73,7 +73,7 @@ class GerenciadorDocumentos:
 
         return credenciais
 
-    def extrair_cnpj_por_crop_ocr(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
+    def extrair_cnpj_por_crop_nfs(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
         """
         Realiza OCR em uma área fixa do PDF onde o CNPJ costuma estar localizado.
         Retorna o CNPJ com apenas os números.
@@ -103,8 +103,8 @@ class GerenciadorDocumentos:
             texto = pytesseract.image_to_string(img, config='--psm 10')
             os.remove(cnpj_crop_path)
 
-            cnpj = re.sub(r'\D', '', texto)
-            return cnpj if len(cnpj) == 14 else None
+            cnpj = re.sub(r'\D', '', texto).zfill(14)
+            return cnpj  
 
         except Exception as e:
             print(f"\nErro ao extrair CNPJ por coordenada OCR: {e}")
@@ -121,7 +121,7 @@ class GerenciadorDocumentos:
             doc.close()
 
             image = Image.open(temp_img_path)
-            cnpj_crop = image.crop((175, 720, 400, 740))  
+            cnpj_crop = image.crop((20, 720, 400, 740))  
             cnpj_crop_path = 'temp_boleto_crop.jpg'
             cnpj_crop.save(cnpj_crop_path)
             os.remove(temp_img_path)
@@ -140,7 +140,7 @@ class GerenciadorDocumentos:
             texto = pytesseract.image_to_string(img, config='--psm 10')
             os.remove(cnpj_crop_path)
 
-            cnpj = re.sub(r'\D', '', texto)
+            cnpj = re.sub(r'\D', '', texto).zfill(14)
             return cnpj  
 
 
@@ -255,7 +255,7 @@ class GerenciadorDocumentos:
                         documentos = self.encontrar_documentos_nf(texto)   
                         
                     if not documentos:
-                        cnpj_crop = self.extrair_cnpj_por_crop_ocr(caminho_completo)
+                        cnpj_crop = self.extrair_cnpj_por_crop_nfs(caminho_completo)
                         if cnpj_crop and cnpj_crop not in self.CNPJS_IGNORADOS:
                             documentos = [cnpj_crop] 
 
@@ -270,42 +270,102 @@ class GerenciadorDocumentos:
                     print(f"\nErro ao processar {arquivo}: {e}")
                     
 
+
+    def normalizar_nome(self, nome: str) -> str:
+        nome = nome.strip()
+        nome = re.sub(r"[^\w\s-]", "", nome)  # Remove caracteres especiais
+        nome = nome.replace(" ", "_")
+        return nome
+
+
+    def organizar_por_cliente(self, planilha_path: str = "emails.teste.xlsx") -> None:
+        caminho_mescladas = os.path.join(self.organizados_dir, "Pastas_Mescladas")
+        caminho_destino = os.path.join(self.organizados_dir, "Clientes")
+
+        if not os.path.exists(caminho_mescladas):
+            print("\nErro: Pastas mescladas não encontradas. Execute `mesclar_pastas()` primeiro.")
+            return
+
+        self.criar_diretorio(caminho_destino)
+
+        try:
+            df = pd.read_excel(planilha_path)
+        except Exception as e:
+            print(f"\nErro ao ler a planilha: {e}")
+            return
+
+        if 'CLIENTE' not in df.columns or 'CNPJ' not in df.columns:
+            print("\nErro: Colunas 'CLIENTE' ou 'CNPJ' não encontradas na planilha.")
+            return
+
+        cliente_cnpjs = df.groupby("CLIENTE")["CNPJ"].apply(list).to_dict()
+
+        for cliente, cnpjs in cliente_cnpjs.items():
+            pasta_cliente = os.path.join(caminho_destino, self.normalizar_nome(cliente))
+            self.criar_diretorio(pasta_cliente)
+
+            for cnpj in cnpjs:
+                nome_cnpj = str(cnpj).zfill(14)
+                origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
+
+                if os.path.exists(origem_cnpj):
+                    destino_cnpj = os.path.join(pasta_cliente, nome_cnpj)
+                    self.criar_diretorio(destino_cnpj)
+
+                    for raiz, dirs, arquivos in os.walk(origem_cnpj):
+                        rel_path = os.path.relpath(raiz, origem_cnpj)
+                        destino_atual = os.path.join(destino_cnpj, rel_path)
+
+                        self.criar_diretorio(destino_atual)
+
+                        for arquivo in arquivos:
+                            caminho_arquivo_origem = os.path.join(raiz, arquivo)
+                            caminho_arquivo_destino = os.path.join(destino_atual, arquivo)
+                            shutil.copy2(caminho_arquivo_origem, caminho_arquivo_destino)
+
+        print("\nOrganização por cliente concluída com sucesso.")
+
+
+
     def mesclar_pastas(self) -> None:
         caminho_boletos = os.path.join(self.organizados_dir, 'Boletos_organizados')
         caminho_nfs = os.path.join(self.organizados_dir, 'nfs_organizados')
         caminho_destino = os.path.join(self.organizados_dir, 'Pastas_Mescladas')
-        caminho_sem_documento = 'GS/envio_boletos_nfs/docs_sem_conjunto'
-        
+
         if not os.path.exists(caminho_boletos) or not os.path.exists(caminho_nfs):
             print("\nErro: Pastas de boletos ou NF-es organizadas não encontradas.")
             return
-            
+
         self.criar_diretorio(caminho_destino)
 
-        caminho_sem_documento = os.path.join(caminho_nfs, 'nfs sem documento')
-        if os.path.exists(caminho_sem_documento):
-            destino_sem_documento = os.path.join(caminho_destino, 'nfs sem documento')
-            if os.path.exists(destino_sem_documento):
-                shutil.rmtree(destino_sem_documento)
-            shutil.copytree(caminho_sem_documento, destino_sem_documento)
-            print("\nPasta 'nfs sem documento' copiada para destino.")
-
         pastas_boletos = set(os.listdir(caminho_boletos))
-        pastas_nfs = set(os.listdir(caminho_nfs)) - {'nfs sem documento'}
-        pastas_comuns = pastas_boletos & pastas_nfs
-        
-        if not pastas_comuns:
-            print("\nNenhuma pasta com documento correspondente encontrada.")
+        pastas_nfs = set(os.listdir(caminho_nfs)) - {'docs_sem_conjunto'}
+        todas_pastas = pastas_boletos | pastas_nfs
+
+        if not todas_pastas:
+            print("\nNenhuma pasta encontrada para mesclar.")
             return
 
-        print(f"\nMesclando {len(pastas_comuns)} pastas com documento correspondente...")
-        for pasta in tqdm(pastas_comuns, desc='Mesclando pastas'):
+        for pasta in todas_pastas:
             pasta_destino = os.path.join(caminho_destino, pasta)
             self.criar_diretorio(pasta_destino)
-            
-            for origem in [os.path.join(caminho_boletos, pasta), os.path.join(caminho_nfs, pasta)]:
-                for item in os.listdir(origem):
-                    shutil.copy2(os.path.join(origem, item), pasta_destino)
+
+            origem_boletos = os.path.join(caminho_boletos, pasta)
+            if os.path.exists(origem_boletos):
+                for arquivo in os.listdir(origem_boletos):
+                    shutil.copy2(os.path.join(origem_boletos, arquivo), pasta_destino)
+
+            origem_nfs = os.path.join(caminho_nfs, pasta)
+            if os.path.exists(origem_nfs):
+                for arquivo in os.listdir(origem_nfs):
+                    shutil.copy2(os.path.join(origem_nfs, arquivo), pasta_destino)
+
+        print("\nPastas mescladas com sucesso.")
+
+        # Chama a função de organização por cliente
+        self.organizar_por_cliente("emails.teste.xlsx")
+
+
 
     def carregar_dados_mes_cliente(self, caminho='GS/envio_boletos_nfs/emails.teste.xlsx') -> None:
         if not os.path.exists(caminho):
@@ -502,31 +562,7 @@ Sistema Automático de envio de Faturamento"""
         self.separar_enviados_nao_enviados(enviados_ids)
         self.calcular_porcentagem_nfs_enviadas()
         return enviados_ids
-    
-    def separar_enviados_nao_enviados(self, enviados: List[str]) -> None:
-        destino_base = os.path.join(self.organizados_dir, 'Pastas_Separadas')   
-        enviados_dir = os.path.join(destino_base, 'enviados')
-        nao_enviados_dir = os.path.join(destino_base, 'nao_enviados')
-
-        self.criar_diretorio(enviados_dir)
-        self.criar_diretorio(nao_enviados_dir)
-
-        caminho_origem = os.path.join(self.organizados_dir, 'Pastas_Mescladas')
-        todas_pastas = [
-            pasta for pasta in os.listdir(caminho_origem)
-            if os.path.isdir(os.path.join(caminho_origem, pasta)) and pasta != 'nfs sem documento'
-        ]
-
-        for pasta in todas_pastas:
-            origem = os.path.join(caminho_origem, pasta)
-            destino = os.path.join(enviados_dir if pasta in enviados else nao_enviados_dir, pasta)
-
-            if os.path.exists(destino):
-                shutil.rmtree(destino)
-            
-            shutil.copytree(origem, destino)
-
-        print(f"\nPastas separadas em:\n - Enviados: {enviados_dir}\n - Não enviados: {nao_enviados_dir}")
+ 
 
     def calcular_porcentagem_nfs_enviadas(self) -> None:
         import pandas as pd

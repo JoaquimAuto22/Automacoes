@@ -15,7 +15,7 @@ import time
 import os
 import re  
 
-path = "GS/envio_boletos_nfs/SINGULAR_FACILITIES_CE/BOLETOS/27-05 MILIGRAMA FARMACIA DE MANIPULACAO SA.pdf"
+path = "GS/envio_boletos_nfs/SINGULAR_FACILITIES_CE/arquivos_organizados/Boletos_organizados/00000000000134/27-05 GLORIA MALL.pdf"
 
 def pdf_to_img(path: str, page: int = 0) -> None:
     pdf_document = fitz.open(path)
@@ -28,7 +28,7 @@ def pdf_to_img(path: str, page: int = 0) -> None:
 
     image = Image.open(img_path)
 
-    cnpj_cliente = image.crop((175, 720, 400, 740))
+    cnpj_cliente = image.crop((20, 720, 400, 740))
 
     cnpj_cliente.save("cnpj.jpg")
    
