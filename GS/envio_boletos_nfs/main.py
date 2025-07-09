@@ -40,6 +40,53 @@ class GerenciadorDocumentos:
 
         self.email_credenciais = self._ler_credenciais_email()
         self.carregar_dados_mes_cliente()
+        
+    def organizar_por_cliente(self, planilha_path: str = "emails.teste.xlsx") -> None:
+        caminho_mescladas = os.path.join(self.organizados_dir, "Pastas_Mescladas")
+        caminho_destino = os.path.join(self.organizados_dir, "Clientes")
+
+        if not os.path.exists(caminho_mescladas):
+            print("\nErro: Pastas mescladas não encontradas. Execute `mesclar_pastas()` primeiro.")
+            return
+
+        self.criar_diretorio(caminho_destino)
+
+        try:
+            df = pd.read_excel(planilha_path)
+        except Exception as e:
+            print(f"\nErro ao ler a planilha: {e}")
+            return
+
+        if 'CLIENTE' not in df.columns or 'CNPJ' not in df.columns:
+            print("\nErro: Colunas 'CLIENTE' ou 'CNPJ' não encontradas na planilha.")
+            return
+
+        cliente_cnpjs = df.groupby("CLIENTE")["CNPJ"].apply(list).to_dict()
+
+        for cliente, cnpjs in cliente_cnpjs.items():
+            pasta_cliente = os.path.join(caminho_destino, self.normalizar_nome(cliente))
+            self.criar_diretorio(pasta_cliente)
+
+            for cnpj in cnpjs:
+                nome_cnpj = str(cnpj).zfill(14)
+                origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
+
+                if os.path.exists(origem_cnpj):
+                    destino_cnpj = os.path.join(pasta_cliente, nome_cnpj)
+                    self.criar_diretorio(destino_cnpj)
+
+                    for raiz, dirs, arquivos in os.walk(origem_cnpj):
+                        rel_path = os.path.relpath(raiz, origem_cnpj)
+                        destino_atual = os.path.join(destino_cnpj, rel_path)
+
+                        self.criar_diretorio(destino_atual)
+
+                        for arquivo in arquivos:
+                            caminho_arquivo_origem = os.path.join(raiz, arquivo)
+                            caminho_arquivo_destino = os.path.join(destino_atual, arquivo)
+                            shutil.copy2(caminho_arquivo_origem, caminho_arquivo_destino)
+
+        print("\nOrganização por cliente concluída com sucesso.")
 
     def selecionar_pasta_base(self) -> Optional[str]:
         root = tk.Tk()
@@ -73,42 +120,53 @@ class GerenciadorDocumentos:
 
         return credenciais
 
-    def extrair_cnpj_por_crop_nfs(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
-        """
-        Realiza OCR em uma área fixa do PDF onde o CNPJ costuma estar localizado.
-        Retorna o CNPJ com apenas os números.
-        """
-        try:
-            doc = fitz.open(caminho_pdf)
-            page = doc.load_page(pagina)
-            pix = page.get_pixmap(dpi=300)
-            temp_img_path = 'temp_crop_ocr.jpg'
-            pix.save(temp_img_path)
-            doc.close()
+    def organizar_por_cliente_usando_dados(self) -> None:
+        caminho_mescladas = os.path.join(self.organizados_dir, "Pastas_Mescladas")
+        caminho_destino = os.path.join(self.organizados_dir, "Clientes")
 
-            image = Image.open(temp_img_path)
-            cnpj_crop = image.crop((77, 232, 170, 245))
-            cnpj_crop_path = "cnpj_crop.jpg"
-            cnpj_crop.save(cnpj_crop_path)
-            os.remove(temp_img_path)
+        if not os.path.exists(caminho_mescladas):
+            print("\nErro: Pastas mescladas não encontradas. Execute `mesclar_pastas()` primeiro.")
+            return
 
-            img = cv.imread(cnpj_crop_path)
-            if img is None:
-                print(f"Erro ao abrir imagem para OCR: {cnpj_crop_path}")
-                return None
-            img = cv.resize(img, (img.shape[1]*2, img.shape[0]*2), interpolation=cv.INTER_LANCZOS4)
-            img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-            _, img = cv.threshold(img, 150, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+        self.criar_diretorio(caminho_destino)
 
-            texto = pytesseract.image_to_string(img, config='--psm 10')
-            os.remove(cnpj_crop_path)
+        if not self.CNPJ_PARA_DADOS:
+            print("\nErro: Nenhum dado de cliente carregado. Execute `carregar_dados_mes_cliente()` primeiro.")
+            return
 
-            cnpj = re.sub(r'\D', '', texto).zfill(14)
-            return cnpj  
+        for cnpj, (mes_ano, cliente) in self.CNPJ_PARA_DADOS.items():
+            nome_cnpj = self.limpar_cnpj(cnpj).zfill(14)
+            nome_cliente = self.normalizar_nome(cliente)
 
-        except Exception as e:
-            print(f"\nErro ao extrair CNPJ por coordenada OCR: {e}")
-            return None
+            pasta_cliente = os.path.join(caminho_destino, nome_cliente)
+            self.criar_diretorio(pasta_cliente)
+
+            origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
+
+            if not os.path.exists(origem_cnpj):
+                print(f"❌ Pasta do CNPJ {nome_cnpj} não encontrada.")
+                continue
+
+            destino_cnpj = os.path.join(pasta_cliente, nome_cnpj)
+            self.criar_diretorio(destino_cnpj)
+
+            print(f"\nOrganizando: Cliente '{cliente}' | CNPJ: {nome_cnpj}")
+
+            for raiz, dirs, arquivos in os.walk(origem_cnpj):
+                rel_path = os.path.relpath(raiz, origem_cnpj)
+                destino_atual = os.path.join(destino_cnpj, rel_path)
+                self.criar_diretorio(destino_atual)
+
+                for arquivo in arquivos:
+                    origem_arquivo = os.path.join(raiz, arquivo)
+                    destino_arquivo = os.path.join(destino_atual, arquivo)
+                    try:
+                        shutil.copy2(origem_arquivo, destino_arquivo)
+                    except Exception as e:
+                        print(f"⚠️ Erro ao copiar '{arquivo}': {e}")
+
+        print("\n✅ Organização por cliente concluída com sucesso.")
+
         
     def extrair_cnpj_boleto_por_imagem(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
         
@@ -278,53 +336,7 @@ class GerenciadorDocumentos:
         return nome
 
 
-    def organizar_por_cliente(self, planilha_path: str = "emails.teste.xlsx") -> None:
-        caminho_mescladas = os.path.join(self.organizados_dir, "Pastas_Mescladas")
-        caminho_destino = os.path.join(self.organizados_dir, "Clientes")
-
-        if not os.path.exists(caminho_mescladas):
-            print("\nErro: Pastas mescladas não encontradas. Execute `mesclar_pastas()` primeiro.")
-            return
-
-        self.criar_diretorio(caminho_destino)
-
-        try:
-            df = pd.read_excel(planilha_path)
-        except Exception as e:
-            print(f"\nErro ao ler a planilha: {e}")
-            return
-
-        if 'CLIENTE' not in df.columns or 'CNPJ' not in df.columns:
-            print("\nErro: Colunas 'CLIENTE' ou 'CNPJ' não encontradas na planilha.")
-            return
-
-        cliente_cnpjs = df.groupby("CLIENTE")["CNPJ"].apply(list).to_dict()
-
-        for cliente, cnpjs in cliente_cnpjs.items():
-            pasta_cliente = os.path.join(caminho_destino, self.normalizar_nome(cliente))
-            self.criar_diretorio(pasta_cliente)
-
-            for cnpj in cnpjs:
-                nome_cnpj = str(cnpj).zfill(14)
-                origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
-
-                if os.path.exists(origem_cnpj):
-                    destino_cnpj = os.path.join(pasta_cliente, nome_cnpj)
-                    self.criar_diretorio(destino_cnpj)
-
-                    for raiz, dirs, arquivos in os.walk(origem_cnpj):
-                        rel_path = os.path.relpath(raiz, origem_cnpj)
-                        destino_atual = os.path.join(destino_cnpj, rel_path)
-
-                        self.criar_diretorio(destino_atual)
-
-                        for arquivo in arquivos:
-                            caminho_arquivo_origem = os.path.join(raiz, arquivo)
-                            caminho_arquivo_destino = os.path.join(destino_atual, arquivo)
-                            shutil.copy2(caminho_arquivo_origem, caminho_arquivo_destino)
-
-        print("\nOrganização por cliente concluída com sucesso.")
-
+    
 
 
     def mesclar_pastas(self) -> None:
