@@ -15,7 +15,7 @@ import time
 import os
 import re  
 
-path = "BEACH CLASS CUMBUCO  NF.pdf"
+path = "ECO PARK  NF -20778  SINGULAR.pdf"
 
 def pdf_to_img(path: str, page: int = 0) -> None:
     pdf_document = fitz.open(path)
@@ -28,19 +28,19 @@ def pdf_to_img(path: str, page: int = 0) -> None:
 
     image = Image.open(img_path)
 
-    cnpj_cliente = image.crop((76, 230, 180, 248))
+    cnpj_cliente = image.crop((77, 230, 180, 250))
 
     cnpj_cliente.save("cnpj.jpg")
    
 
-def extract_text(img_path: str, config: str = '--psm 10') -> str:
+def extract_text(img_path: str, config: str = '--psm 9') -> str:
     img = cv.imread(img_path)
     if img is None:
         raise FileNotFoundError(f"Imagem não encontrada: {img_path}")
     
-    scale_percent = 450
-    new_width = int(img.shape[1] * scale_percent / 100)
-    new_height = int(img.shape[0] * scale_percent / 100)
+    scale_percent = 300
+    new_width = int(img.shape[1] * scale_percent / 150)
+    new_height = int(img.shape[0] * scale_percent / 150)
     img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
 
     img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)

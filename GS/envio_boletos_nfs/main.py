@@ -136,7 +136,7 @@ class GerenciadorDocumentos:
 
             # Corta a área onde está o CNPJ (ajuste conforme necessário)
             image = Image.open(temp_img_path)
-            cnpj_crop = image.crop((76, 230, 180, 249)) 
+            cnpj_crop = image.crop((77, 230, 180, 250)) 
             cnpj_crop_path = 'temp_nfs_crop.jpg'
             cnpj_crop.save(cnpj_crop_path)
             os.remove(temp_img_path)
@@ -147,14 +147,14 @@ class GerenciadorDocumentos:
                 print(f"Erro ao abrir imagem para OCR (NFS): {cnpj_crop_path}")
                 return None
 
-            scale_percent = 450
-            new_width = int(img.shape[1] * scale_percent / 100)
-            new_height = int(img.shape[0] * scale_percent / 100)
+            scale_percent = 300
+            new_width = int(img.shape[1] * scale_percent / 150)
+            new_height = int(img.shape[0] * scale_percent / 150)
             img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
             img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
             # Realiza OCR
-            texto = pytesseract.image_to_string(img, config='--psm 10')
+            texto = pytesseract.image_to_string(img, config='--psm 9')
             os.remove(cnpj_crop_path)
 
             cnpj = re.sub(r'\D', '', texto)
