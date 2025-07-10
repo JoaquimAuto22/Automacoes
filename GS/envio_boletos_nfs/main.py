@@ -41,7 +41,7 @@ class GerenciadorDocumentos:
         self.email_credenciais = self._ler_credenciais_email()
         self.carregar_dados_mes_cliente()
         
-    def organizar_por_cliente(self, planilha_path: str = "emails.teste.xlsx") -> None:
+    def organizar_por_cliente_usando_dados(self) -> None:
         caminho_mescladas = os.path.join(self.organizados_dir, "Pastas_Mescladas")
         caminho_destino = os.path.join(self.organizados_dir, "Clientes")
 
@@ -51,42 +51,45 @@ class GerenciadorDocumentos:
 
         self.criar_diretorio(caminho_destino)
 
-        try:
-            df = pd.read_excel(planilha_path)
-        except Exception as e:
-            print(f"\nErro ao ler a planilha: {e}")
+        if not self.CNPJ_PARA_DADOS:
+            print("\nErro: Nenhum dado de cliente carregado. Execute `carregar_dados_mes_cliente()` primeiro.")
             return
 
-        if 'CLIENTE' not in df.columns or 'CNPJ' not in df.columns:
-            print("\nErro: Colunas 'CLIENTE' ou 'CNPJ' não encontradas na planilha.")
-            return
+        for cnpj, (mes_ano, cliente) in self.CNPJ_PARA_DADOS.items():
+            nome_cnpj = self.limpar_cnpj(cnpj).zfill(14)
+            nome_cliente = self.normalizar_nome(cliente)
 
-        cliente_cnpjs = df.groupby("CLIENTE")["CNPJ"].apply(list).to_dict()
-
-        for cliente, cnpjs in cliente_cnpjs.items():
-            pasta_cliente = os.path.join(caminho_destino, self.normalizar_nome(cliente))
+            pasta_cliente = os.path.join(caminho_destino, nome_cliente)
             self.criar_diretorio(pasta_cliente)
 
-            for cnpj in cnpjs:
-                nome_cnpj = str(cnpj).zfill(14)
-                origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
+            origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
 
-                if os.path.exists(origem_cnpj):
-                    destino_cnpj = os.path.join(pasta_cliente, nome_cnpj)
-                    self.criar_diretorio(destino_cnpj)
+            if not os.path.exists(origem_cnpj):
+                print(f"❌ Pasta do CNPJ {nome_cnpj} não encontrada.")
+                continue
 
-                    for raiz, dirs, arquivos in os.walk(origem_cnpj):
-                        rel_path = os.path.relpath(raiz, origem_cnpj)
-                        destino_atual = os.path.join(destino_cnpj, rel_path)
+            # Lista os arquivos na pasta do CNPJ
+            arquivos = [f for f in os.listdir(origem_cnpj) if os.path.isfile(os.path.join(origem_cnpj, f))]
+            if not arquivos:
+                print(f"⚠️ Nenhum arquivo encontrado para o CNPJ {nome_cnpj}")
+                continue
 
-                        self.criar_diretorio(destino_atual)
+            for arquivo in arquivos:
+                nome_base = os.path.splitext(arquivo)[0]  # Remove extensão .pdf
+                pasta_nota = os.path.join(pasta_cliente, nome_base, nome_cnpj)
+                self.criar_diretorio(pasta_nota)
 
-                        for arquivo in arquivos:
-                            caminho_arquivo_origem = os.path.join(raiz, arquivo)
-                            caminho_arquivo_destino = os.path.join(destino_atual, arquivo)
-                            shutil.copy2(caminho_arquivo_origem, caminho_arquivo_destino)
+                origem_arquivo = os.path.join(origem_cnpj, arquivo)
+                destino_arquivo = os.path.join(pasta_nota, arquivo)
 
-        print("\nOrganização por cliente concluída com sucesso.")
+                try:
+                    shutil.copy2(origem_arquivo, destino_arquivo)
+                    print(f"Copiado: {arquivo} → {pasta_nota}")
+                except Exception as e:
+                    print(f" Erro ao copiar '{arquivo}': {e}")
+
+        print("\n✅ Organização por cliente concluída com sucesso.")
+
 
     def selecionar_pasta_base(self) -> Optional[str]:
         root = tk.Tk()
@@ -120,54 +123,47 @@ class GerenciadorDocumentos:
 
         return credenciais
 
-    def organizar_por_cliente_usando_dados(self) -> None:
-        caminho_mescladas = os.path.join(self.organizados_dir, "Pastas_Mescladas")
-        caminho_destino = os.path.join(self.organizados_dir, "Clientes")
+    
+    def extrair_cnpj_nfs_por_imagem(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
+        try:
+            doc = fitz.open(caminho_pdf)
+            page = doc.load_page(pagina)
+            pix = page.get_pixmap(dpi=300)
+            temp_img_path = 'temp_nfs.jpg'
+            pix.save(temp_img_path)
+            doc.close()
 
-        if not os.path.exists(caminho_mescladas):
-            print("\nErro: Pastas mescladas não encontradas. Execute `mesclar_pastas()` primeiro.")
-            return
+            # Corta a área onde está o CNPJ (ajuste conforme necessário)
+            image = Image.open(temp_img_path)
+            cnpj_crop = image.crop((76, 230, 180, 248))  
+            cnpj_crop_path = 'temp_nfs_crop.jpg'
+            cnpj_crop.save(cnpj_crop_path)
+            os.remove(temp_img_path)
 
-        self.criar_diretorio(caminho_destino)
+            # Pré-processa a imagem para OCR
+            img = cv.imread(cnpj_crop_path)
+            if img is None:
+                print(f"Erro ao abrir imagem para OCR (NFS): {cnpj_crop_path}")
+                return None
 
-        if not self.CNPJ_PARA_DADOS:
-            print("\nErro: Nenhum dado de cliente carregado. Execute `carregar_dados_mes_cliente()` primeiro.")
-            return
+            scale_percent = 300
+            new_width = int(img.shape[1] * scale_percent / 100)
+            new_height = int(img.shape[0] * scale_percent / 100)
+            img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
+            img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
-        for cnpj, (mes_ano, cliente) in self.CNPJ_PARA_DADOS.items():
-            nome_cnpj = self.limpar_cnpj(cnpj).zfill(14)
-            nome_cliente = self.normalizar_nome(cliente)
+            # Realiza OCR
+            texto = pytesseract.image_to_string(img, config='--psm 10')
+            os.remove(cnpj_crop_path)
 
-            pasta_cliente = os.path.join(caminho_destino, nome_cliente)
-            self.criar_diretorio(pasta_cliente)
+            # Limpa o resultado e retorna
+            cnpj = re.sub(r'\D', '', texto).zfill(14)
+            return cnpj  
 
-            origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
+        except Exception as e:
+            print(f"\nErro ao extrair CNPJ por imagem da NFS: {e}")
+            return None
 
-            if not os.path.exists(origem_cnpj):
-                print(f"❌ Pasta do CNPJ {nome_cnpj} não encontrada.")
-                continue
-
-            destino_cnpj = os.path.join(pasta_cliente, nome_cnpj)
-            self.criar_diretorio(destino_cnpj)
-
-            print(f"\nOrganizando: Cliente '{cliente}' | CNPJ: {nome_cnpj}")
-
-            for raiz, dirs, arquivos in os.walk(origem_cnpj):
-                rel_path = os.path.relpath(raiz, origem_cnpj)
-                destino_atual = os.path.join(destino_cnpj, rel_path)
-                self.criar_diretorio(destino_atual)
-
-                for arquivo in arquivos:
-                    origem_arquivo = os.path.join(raiz, arquivo)
-                    destino_arquivo = os.path.join(destino_atual, arquivo)
-                    try:
-                        shutil.copy2(origem_arquivo, destino_arquivo)
-                    except Exception as e:
-                        print(f"⚠️ Erro ao copiar '{arquivo}': {e}")
-
-        print("\n✅ Organização por cliente concluída com sucesso.")
-
-        
     def extrair_cnpj_boleto_por_imagem(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
         
         try:
@@ -220,9 +216,10 @@ class GerenciadorDocumentos:
         except Exception as e:
             print(f"\nErro ao extrair texto do PDF {caminho_pdf}: {e}")
             return []
-
+        
     def limpar_cnpj(self, cnpj: str) -> str:
-        return re.sub(r'\D', '', cnpj)
+        return re.sub(r'\D', '', str(cnpj))
+
 
     def limpar_cpf(self, cpf: str) -> str:
         return re.sub(r'\D', '', cpf)
@@ -313,7 +310,7 @@ class GerenciadorDocumentos:
                         documentos = self.encontrar_documentos_nf(texto)   
                         
                     if not documentos:
-                        cnpj_crop = self.extrair_cnpj_por_crop_nfs(caminho_completo)
+                        cnpj_crop = self.extrair_cnpj_nfs_por_imagem(caminho_completo)
                         if cnpj_crop and cnpj_crop not in self.CNPJS_IGNORADOS:
                             documentos = [cnpj_crop] 
 
@@ -330,14 +327,7 @@ class GerenciadorDocumentos:
 
 
     def normalizar_nome(self, nome: str) -> str:
-        nome = nome.strip()
-        nome = re.sub(r"[^\w\s-]", "", nome)  # Remove caracteres especiais
-        nome = nome.replace(" ", "_")
-        return nome
-
-
-    
-
+        return re.sub(r'[^a-zA-Z0-9_-]', '', nome.lower().replace(' ', '_'))
 
     def mesclar_pastas(self) -> None:
         caminho_boletos = os.path.join(self.organizados_dir, 'Boletos_organizados')
@@ -375,7 +365,7 @@ class GerenciadorDocumentos:
         print("\nPastas mescladas com sucesso.")
 
         # Chama a função de organização por cliente
-        self.organizar_por_cliente("emails.teste.xlsx")
+        self.organizar_por_cliente_usando_dados()
 
 
 
@@ -627,7 +617,6 @@ Sistema Automático de envio de Faturamento"""
 
     def executar(self) -> None:
         print("\n=== INÍCIO DO PROCESSAMENTO ===")
-        inicio = time.time()
         print("\n Organizando boletos...")
         self.organizar_boletos()
         print("\n Organizando NF-es...")
