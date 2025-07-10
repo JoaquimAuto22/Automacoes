@@ -62,33 +62,33 @@ class GerenciadorDocumentos:
             pasta_cliente = os.path.join(caminho_destino, nome_cliente)
             self.criar_diretorio(pasta_cliente)
 
+            pasta_cnpj = os.path.join(pasta_cliente, nome_cnpj)
+            self.criar_diretorio(pasta_cnpj)
+
             origem_cnpj = os.path.join(caminho_mescladas, nome_cnpj)
 
             if not os.path.exists(origem_cnpj):
-                print(f"❌ Pasta do CNPJ {nome_cnpj} não encontrada.")
+                print(f"Pasta do CNPJ {nome_cnpj} não encontrada.")
                 continue
 
-            # Lista os arquivos na pasta do CNPJ
             arquivos = [f for f in os.listdir(origem_cnpj) if os.path.isfile(os.path.join(origem_cnpj, f))]
             if not arquivos:
-                print(f"⚠️ Nenhum arquivo encontrado para o CNPJ {nome_cnpj}")
+                print(f" Nenhum arquivo encontrado para o CNPJ {nome_cnpj}")
                 continue
 
             for arquivo in arquivos:
-                nome_base = os.path.splitext(arquivo)[0]  # Remove extensão .pdf
-                pasta_nota = os.path.join(pasta_cliente, nome_base, nome_cnpj)
-                self.criar_diretorio(pasta_nota)
-
                 origem_arquivo = os.path.join(origem_cnpj, arquivo)
-                destino_arquivo = os.path.join(pasta_nota, arquivo)
+                destino_arquivo = os.path.join(pasta_cnpj, arquivo)
 
                 try:
                     shutil.copy2(origem_arquivo, destino_arquivo)
-                    print(f"Copiado: {arquivo} → {pasta_nota}")
+                    print(f"Copiado: {arquivo} → {pasta_cnpj}")
                 except Exception as e:
-                    print(f" Erro ao copiar '{arquivo}': {e}")
+                    print(f"Erro ao copiar '{arquivo}': {e}")
 
-        print("\n✅ Organização por cliente concluída com sucesso.")
+        print("\n Organização por cliente concluída com sucesso.")
+
+
 
 
     def selecionar_pasta_base(self) -> Optional[str]:
@@ -126,6 +126,7 @@ class GerenciadorDocumentos:
     
     def extrair_cnpj_nfs_por_imagem(self, caminho_pdf: str, pagina: int = 0) -> Optional[str]:
         try:
+            # Converte a página PDF em imagem
             doc = fitz.open(caminho_pdf)
             page = doc.load_page(pagina)
             pix = page.get_pixmap(dpi=300)
@@ -135,7 +136,7 @@ class GerenciadorDocumentos:
 
             # Corta a área onde está o CNPJ (ajuste conforme necessário)
             image = Image.open(temp_img_path)
-            cnpj_crop = image.crop((76, 230, 180, 248))  
+            cnpj_crop = image.crop((76, 230, 180, 249)) 
             cnpj_crop_path = 'temp_nfs_crop.jpg'
             cnpj_crop.save(cnpj_crop_path)
             os.remove(temp_img_path)
@@ -146,7 +147,7 @@ class GerenciadorDocumentos:
                 print(f"Erro ao abrir imagem para OCR (NFS): {cnpj_crop_path}")
                 return None
 
-            scale_percent = 300
+            scale_percent = 450
             new_width = int(img.shape[1] * scale_percent / 100)
             new_height = int(img.shape[0] * scale_percent / 100)
             img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
@@ -156,9 +157,11 @@ class GerenciadorDocumentos:
             texto = pytesseract.image_to_string(img, config='--psm 10')
             os.remove(cnpj_crop_path)
 
-            # Limpa o resultado e retorna
-            cnpj = re.sub(r'\D', '', texto).zfill(14)
-            return cnpj  
+            cnpj = re.sub(r'\D', '', texto)
+            if cnpj.isnumeric():
+                    return cnpj
+            else:
+                    return None
 
         except Exception as e:
             print(f"\nErro ao extrair CNPJ por imagem da NFS: {e}")
@@ -185,7 +188,7 @@ class GerenciadorDocumentos:
                 print(f"Erro ao abrir imagem para OCR (boleto): {cnpj_crop_path}")
                 return None
 
-            scale_percent = 300
+            scale_percent = 450
             new_width = int(img.shape[1] * scale_percent / 100)
             new_height = int(img.shape[0] * scale_percent / 100)
             img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
@@ -195,7 +198,10 @@ class GerenciadorDocumentos:
             os.remove(cnpj_crop_path)
 
             cnpj = re.sub(r'\D', '', texto).zfill(14)
-            return cnpj  
+            if cnpj.isnumeric():
+                    return cnpj
+            else:
+                    return None
 
 
         except Exception as e:

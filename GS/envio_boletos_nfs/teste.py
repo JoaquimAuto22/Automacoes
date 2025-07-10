@@ -15,7 +15,7 @@ import time
 import os
 import re  
 
-path = "CONDOMINIO RESIDENCIAL VILLA MARACANA - 20783.pdf"
+path = "BEACH CLASS CUMBUCO  NF.pdf"
 
 def pdf_to_img(path: str, page: int = 0) -> None:
     pdf_document = fitz.open(path)
@@ -28,7 +28,7 @@ def pdf_to_img(path: str, page: int = 0) -> None:
 
     image = Image.open(img_path)
 
-    cnpj_cliente = image.crop((76, 230, 180, 249))
+    cnpj_cliente = image.crop((76, 230, 180, 248))
 
     cnpj_cliente.save("cnpj.jpg")
    
@@ -38,7 +38,7 @@ def extract_text(img_path: str, config: str = '--psm 10') -> str:
     if img is None:
         raise FileNotFoundError(f"Imagem não encontrada: {img_path}")
     
-    scale_percent = 300
+    scale_percent = 450
     new_width = int(img.shape[1] * scale_percent / 100)
     new_height = int(img.shape[0] * scale_percent / 100)
     img = cv.resize(img, (new_width, new_height), interpolation=cv.INTER_LANCZOS4)
