@@ -1,4 +1,9 @@
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from email.mime.multipart import MIMEMultipart
+from googleapiclient.errors import HttpError
+from googleapiclient.discovery import build
 from typing import List, Optional, Dict
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -12,13 +17,16 @@ import pandas as pd
 import pytesseract
 import numpy as np
 import cv2 as cv
-import openpyxl 
+import openpyxl
 import smtplib
+import pymssql 
 import shutil
 import fitz
 import time
 import os
 import re
+
+
 
 class GerenciadorDocumentos:
     def __init__(self):
@@ -33,14 +41,18 @@ class GerenciadorDocumentos:
 
         self.CPF_PATTERN = r'\d{3}\.\d{3}\.\d{3}-\d{2}'
         self.CNPJ_PATTERN = r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}'
-        self.CNPJS_IGNORADOS = {"16707848000195", "16707848000519", "40226542000100", "16./07.848/0001-19"}
+        self.CNPJS_IGNORADOS = {"16707848000195", "16707848000519"}
 
-        self.CNPJ_PARA_EMAIL = {}  
         self.CNPJ_PARA_DADOS = {}
+        self.CNPJ_PARA_EMAIL = {}
+
+        self.carregar_credenciais()
 
         self.email_credenciais = self._ler_credenciais_email()
-        self.carregar_dados_mes_cliente()
-        
+        self.carregar_emails_com_cliente()
+        print("CNPJ_PARA_DADOS carregado com os seguintes CNPJs:")
+        print(list(self.CNPJ_PARA_DADOS.keys()))
+
     def organizar_por_cliente_usando_dados(self) -> None:
         caminho_mescladas = os.path.join(self.organizados_dir, "Pastas_Mescladas")
         caminho_destino = os.path.join(self.organizados_dir, "Clientes")
@@ -136,7 +148,7 @@ class GerenciadorDocumentos:
 
             # Corta a área onde está o CNPJ (ajuste conforme necessário)
             image = Image.open(temp_img_path)
-            cnpj_crop = image.crop((77, 230, 180, 250)) 
+            cnpj_crop = image.crop((77, 230, 180, 249)) 
             cnpj_crop_path = 'temp_nfs_crop.jpg'
             cnpj_crop.save(cnpj_crop_path)
             os.remove(temp_img_path)
@@ -157,11 +169,9 @@ class GerenciadorDocumentos:
             texto = pytesseract.image_to_string(img, config='--psm 9')
             os.remove(cnpj_crop_path)
 
-            cnpj = re.sub(r'\D', '', texto)
-            if cnpj.isnumeric():
-                    return cnpj
-            else:
-                    return None
+            cnpj = re.sub(r'\D', '', texto).zfill(14)
+            return cnpj
+           
 
         except Exception as e:
             print(f"\nErro ao extrair CNPJ por imagem da NFS: {e}")
@@ -373,46 +383,83 @@ class GerenciadorDocumentos:
         # Chama a função de organização por cliente
         self.organizar_por_cliente_usando_dados()
 
+    def carregar_credenciais(self, caminho_txt='GS/envio_boletos_nfs/readme.txt') -> None:
+        if not os.path.exists(caminho_txt):
+            raise FileNotFoundError(f"Arquivo de credenciais '{caminho_txt}' não encontrado.")
+
+        self.creds = {}
+        with open(caminho_txt, 'r', encoding='utf-8') as f:
+            for linha in f:
+                if '=' in linha:
+                    chave, valor = linha.strip().split('=', 1)
+                    self.creds[chave.strip()] = valor.strip()
+
+        print("Credenciais carregadas com sucesso:")
+        print(self.creds)
 
 
-    def carregar_dados_mes_cliente(self, caminho='GS/envio_boletos_nfs/emails.teste.xlsx') -> None:
+    def carregar_emails_com_cliente(self, caminho='GS/envio_boletos_nfs/emails.teste.xlsx') -> None:
         if not os.path.exists(caminho):
             print(f"\nAviso: Planilha de dados não encontrada em: {caminho}")
             return
 
         try:
-            df = pd.read_excel(caminho, dtype={'CNPJ': str})
+            # Carrega a planilha com colunas necessárias
+            df = pd.read_excel(caminho, dtype={'CNPJ': str})[['CNPJ', 'Mês/Ano', 'DESTINATARIO']]
             df['CNPJ'] = df['CNPJ'].str.strip().str.replace(r'\D', '', regex=True)
             df['Mês/Ano'] = df['Mês/Ano'].astype(str).str.strip()
-            df['CLIENTE'] = df['CLIENTE'].astype(str).str.strip()
             df['DESTINATARIO'] = df['DESTINATARIO'].astype(str).str.strip()
 
+            # Expande múltiplos destinatários em linhas separadas
             df_formatado = pd.DataFrame(columns=df.columns)
             for _, row in df.iterrows():
                 emails = row['DESTINATARIO'].split(',')
-                if len(emails) == 1:
-                    df_formatado.loc[len(df_formatado)] = row
-                else:
-                    for email in emails:
-                        nova_linha = row.copy()
-                        nova_linha['DESTINATARIO'] = email.strip()
-                        df_formatado.loc[len(df_formatado)] = nova_linha
+                for email in emails:
+                    nova_linha = row.copy()
+                    nova_linha['DESTINATARIO'] = email.strip()
+                    df_formatado.loc[len(df_formatado)] = nova_linha
 
-            for _, linha in df_formatado.iterrows():
+            # Busca nome dos clientes no banco
+            conn = pymssql.connect(server=self.creds['s'], user=self.creds['u'],
+                                password=self.creds['p'], database=self.creds['d'])
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    CLI.CNPJCPF AS CNPJ_CPF_CLIENTE,
+                    CLI.NOME AS CLIENTE
+                FROM CLI
+            """)
+            dados_clientes = pd.DataFrame(cursor.fetchall(), columns=['CNPJ', 'CLIENTE'])
+            dados_clientes['CNPJ'] = dados_clientes['CNPJ'].str.replace(r'\D', '', regex=True)
+            conn.close()
+            cursor.close()
+
+            # Merge entre planilha e banco via CNPJ
+            resultado = df_formatado.merge(dados_clientes, on='CNPJ', how='left')
+
+            # Inicializa os dicionários se não existirem
+            if not hasattr(self, 'CNPJ_PARA_DADOS'):
+                self.CNPJ_PARA_DADOS = {}
+            if not hasattr(self, 'CNPJ_PARA_EMAIL'):
+                self.CNPJ_PARA_EMAIL = {}
+
+            # Popula os dicionários
+            for _, linha in resultado.iterrows():
                 cnpj = linha['CNPJ']
                 mes_ano = linha['Mês/Ano']
                 cliente = linha['CLIENTE']
                 email = linha['DESTINATARIO']
 
-                if cnpj and mes_ano and cliente and email:
+                if pd.notna(cnpj) and pd.notna(mes_ano) and pd.notna(cliente) and pd.notna(email):
                     self.CNPJ_PARA_DADOS[cnpj] = (mes_ano, cliente)
                     if cnpj not in self.CNPJ_PARA_EMAIL:
                         self.CNPJ_PARA_EMAIL[cnpj] = []
                     self.CNPJ_PARA_EMAIL[cnpj].append(email)
 
-            print(f"\n{len(self.CNPJ_PARA_DADOS)} registros de Mês/Ano e CLIENTE carregados da planilha.")
+            print(f"\n{len(self.CNPJ_PARA_DADOS)} registros de Mês/Ano e CLIENTE carregados com e-mails.")
         except Exception as e:
-            print(f"\nErro ao carregar planilha de dados: {e}")
+            print(f"\nErro ao processar dados: {e}")
+
 
     def separar_enviados_nao_enviados(self, enviados: List[str]) -> None:
         destino_base = os.path.join(self.organizados_dir, 'Pastas_Separadas')   
@@ -570,52 +617,52 @@ Sistema Automático de envio de Faturamento"""
         self.separar_enviados_nao_enviados(enviados_ids)
         self.calcular_porcentagem_nfs_enviadas()
         return enviados_ids
- 
 
-    def calcular_porcentagem_nfs_enviadas(self) -> None:
-        import pandas as pd
+    
 
-        base_separadas = os.path.join(self.organizados_dir, 'Pastas_Separadas')
-        enviados_dir = os.path.join(base_separadas, 'enviados')
-        nao_enviados_dir = os.path.join(base_separadas, 'nao_enviados')
+    def salva_relatorio(self, row: List[List]) -> None:
+        SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+        SAMPLE_SPREADSHEET_ID = "15gGHm67_W5maIas-4_YPSzE6R5f_CNJGcza_BJFlNBk"
+        SAMPLE_RANGE_NAME = "Página1!A{}:D10000000000"
 
-        def contar_pdfs_nfs_em_pasta(pasta_base: str) -> int:
-            total = 0
-            if not os.path.exists(pasta_base):
-                return 0
-            for documento in os.listdir(pasta_base):
-                caminho_doc = os.path.join(pasta_base, documento)
-                if os.path.isdir(caminho_doc):
-                    arquivos_pdf = [f for f in os.listdir(caminho_doc) if f.lower().endswith('.pdf')]
-                    total += len(arquivos_pdf)
-            return total
+        creds = None
+        if os.path.exists("configs/token.json"):
+            creds = Credentials.from_authorized_user_file("configs/token.json", SCOPES)
 
-        enviados_nfs = contar_pdfs_nfs_em_pasta(enviados_dir)
-        nao_enviados_nfs = contar_pdfs_nfs_em_pasta(nao_enviados_dir)
-        total_nfs = enviados_nfs + nao_enviados_nfs
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file("configs/client_secret.json", SCOPES)
+                creds = flow.run_local_server(port=0)
 
-        if total_nfs == 0:
-            print("\nNenhum arquivo PDF encontrado nas pastas enviados e não enviados para cálculo.")
-            return
+            with open("configs/token.json", "w") as token:
+                token.write(creds.to_json())
 
-        pct_enviados = (enviados_nfs / total_nfs) * 100
-        pct_nao_enviados = (nao_enviados_nfs / total_nfs) * 100
-
-        df_resumo = pd.DataFrame({
-            'Status': ['Enviados', 'Não Enviados', 'Total'],
-            'Quantidade': [enviados_nfs, nao_enviados_nfs, total_nfs],
-            'Porcentagem (%)': [round(pct_enviados, 2), round(pct_nao_enviados, 2), 100.0]
-        })
-
-        arquivo_saida = os.path.join(os.getcwd(), 'GS/envio_boletos_nfs/resumo_nf_enviadas.xlsx')
         try:
-            df_resumo.to_excel(arquivo_saida, index=False)
-            print(f"\nResumo de NFs enviadas e não enviadas salvo em: {arquivo_saida}")
-        except Exception as e:
-            print(f"\nErro ao salvar o arquivo Excel: {e}")
-    
-    
-    
+            service = build("sheets", "v4", credentials=creds)
+            sheet = service.spreadsheets()
+
+            result = sheet.values().get(
+                spreadsheetId=SAMPLE_SPREADSHEET_ID,
+                range=SAMPLE_RANGE_NAME.format(2)
+            ).execute()
+            values = result.get("values", [])
+
+            idx = 2 + len(values)
+
+            sheet.values().update(
+                spreadsheetId=SAMPLE_SPREADSHEET_ID,
+                range=SAMPLE_RANGE_NAME.format(idx),
+                valueInputOption='USER_ENTERED',
+                body={"values": row}
+            ).execute()
+
+            print(f"Relatório salvo na planilha Google Sheets na linha {idx}.")
+
+        except HttpError as err:
+            print(f"Erro ao acessar Google Sheets: {err}")
+
 
     def criar_diretorio(self, caminho: str) -> None:
         if not os.path.exists(caminho):
@@ -623,6 +670,10 @@ Sistema Automático de envio de Faturamento"""
 
     def executar(self) -> None:
         print("\n=== INÍCIO DO PROCESSAMENTO ===")
+        if not hasattr(self, 'creds'):
+            self.carregar_credenciais()
+        print("\n Carregando dados de clientes e e-mails...")
+        self.carregar_emails_com_cliente()
         print("\n Organizando boletos...")
         self.organizar_boletos()
         print("\n Organizando NF-es...")
@@ -632,18 +683,21 @@ Sistema Automático de envio de Faturamento"""
         print("\n Enviando emails para CNPJs mapeados...")
         enviados_ids = []
         if self.CNPJ_PARA_EMAIL:
-           enviados_ids = self.enviar_emails()
+            enviados_ids = self.enviar_emails()
         if enviados_ids:
             self.nfs_enviadas = len(enviados_ids)
             self.nfs_nao_enviadas = len([
                 doc for doc in os.listdir(os.path.join(self.organizados_dir, 'Pastas_Separadas', 'nao_enviados'))
                 if os.path.isdir(os.path.join(self.organizados_dir, 'Pastas_Separadas', 'nao_enviados', doc))])
-
         else:
             print("\nAviso: Nenhum CNPJ mapeado para envio de emails.")
 
+        print("\n Organizando arquivos por cliente...")
+        self.organizar_por_cliente_usando_dados()
+
         print("\n=== PROCESSAMENTO CONCLUÍDO ===")
         print(f"Resultados disponíveis em: {os.path.abspath(self.organizados_dir)}")
+
 
 if __name__ == "__main__":
     gerenciador = GerenciadorDocumentos()
