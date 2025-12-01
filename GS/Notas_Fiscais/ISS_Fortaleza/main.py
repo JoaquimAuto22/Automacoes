@@ -131,6 +131,8 @@ def run() -> None:
     nav.get(
         'https://idp2.sefin.fortaleza.ce.gov.br/realms/sefin/protocol/openid-connect/auth?nonce=5d91026e-7a08-412f-a50d-91cc2c2576c9&response_type=code&client_id=iss.sefin.fortaleza.ce.gov.br&redirect_uri=https%3A%2F%2Fiss.fortaleza.ce.gov.br%2Fgrpfor%2Foauth2%2Fcallback&scope=openid+profile&state=secret-eb17c44e-25ca-4b8c-bda8-46d8f4d5fee0')
     # Aguarda o site carregar
+    nav.maximize_window()
+
     sleep(1)
     # Verifica se está na página de Login
     while nav.find_elements('xpath', '//*[@id="botao-entrar"]'):
@@ -194,7 +196,7 @@ def run() -> None:
     # clica em 'OK'
     interact('click', '//*[@id="consultarnfseForm:competenciaDateEditorButtonOk"]/span')
     # Clica em 'Consultar'
-    interact('click', '//*[@id="consultarnfseForm:j_id233"]')
+    interact('click', '//*[@id="consultarnfseForm:j_id237"]')
     # Aguarda o fim da consulta
     wait.until(EC.invisibility_of_element_located(('xpath', '//*[@id="mpProgressoContentTable"]/tbody/tr/td/div')))
     sleep(1)
@@ -211,16 +213,16 @@ def run() -> None:
     # Verifica se tem menos que 10 páginas
     if '10' in items:
         # Clica em '>>' para ir para a última página
-        interact('click', '//*[@id="consultarnfseForm:dataTable:j_id368_table"]/tbody/tr/td[16]')
+        interact('click', '//*[@id="consultarnfseForm:dataTable:j_id374_table"]/tbody/tr/td[16]')
         # Aguarda o fim da consulta
         wait.until(
             EC.invisibility_of_element_located(('xpath', '//*[@id="mpProgressoContentTable"]/tbody/tr/td/div')))
         # Acessa o último número de página do rodapé da tabela
         n_pags = int(nav.find_element('xpath',
-                                      '//*[@id="consultarnfseForm:dataTable:j_id368_table"]').text.split()[-3])
-        next_page = '//*[@id="consultarnfseForm:dataTable:j_id368_table"]/tbody/tr/td[15]'
+                                      '//*[@id="consultarnfseForm:dataTable"]').text.split()[-3])
+        next_page = '//*[@id="consultarnfseForm:dataTable:j_id374_table"]/tbody/tr/td[15]'
         # Volta para a primeira página
-        interact('click', '//*[@id="consultarnfseForm:dataTable:j_id368_table"]/tbody/tr/td[1]')
+        interact('click', '//*[@id="consultarnfseForm:dataTable:j_id374_table"]/tbody/tr/td[1]')
     else:
         n_pags = int(items[-1])
         next_page = f'//*[@id="consultarnfseForm:dataTable:j_id370_table"]/tbody/tr/td[{15 - 10 + n_pags}]'
@@ -232,13 +234,13 @@ def run() -> None:
             for _ in range(pag):
                 # Aguarda o fim da consulta
                 wait.until(
-                    EC.invisibility_of_element_located(('xpath', '//*[@id="mpProgressoContentTable"]/tbody/tr/td/div')))
+                    EC.invisibility_of_element_located(('xpath', '//*[@id="consultarnfseForm:dataTable:j_id374_table"]/tbody/tr/td[15]')))
                 interact('click', next_page)
             sleep(3)
         else: # Avança só uma página
             # Aguarda o fim da consulta
             wait.until(
-                EC.invisibility_of_element_located(('xpath', '//*[@id="mpProgressoContentTable"]/tbody/tr/td/div')))
+                EC.invisibility_of_element_located(('xpath', '//*[@id="consultarnfseForm:dataTable:j_id374_table"]/tbody/tr/td[15]')))
             interact('click', next_page)
         '''
         Em cada página há um tabela está na forma :
@@ -343,7 +345,7 @@ def run() -> None:
             # clica em 'OK'
             interact('click', '//*[@id="consultarnfseForm:competenciaDateEditorButtonOk"]/span')
             # Clica em 'Consultar'
-            interact('click', '//*[@id="consultarnfseForm:j_id231"]')
+            interact('//*[@id="consultarnfseForm:j_id237"]')
             # Aguarda o fim da consulta
             wait.until(
                 EC.invisibility_of_element_located(('xpath', '//*[@id="mpProgressoContentTable"]/tbody/tr/td/div')))
